@@ -1,73 +1,55 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Stack, TextField, InputAdornment, IconButton, Typography, Chip, Checkbox, List, ListItem, ListItemText, ListItemButton, Popover, CircularProgress } from '@mui/material';
 import { Search as SearchIcon, ExpandMore, ChevronRight as ChevronRightIcon, Clear as ClearIcon } from '@mui/icons-material';
-import { Category, Subcategory, RecordType } from '../types/taxonomy';
+import { Category, Subcategory } from '../types/taxonomy';
 
-const API_URL = 'https://vitalretain-backend-stage-ckcpgceshzfzdgcf.eastus2-01.azurewebsites.net/api/v1/filerskeepers/taxonomy';
+interface SelectedItem {
+  type: 'category' | 'subcategory' | 'nested';
+  categoryId: string;
+  categoryName: string;
+  subcategoryId?: string;
+  subcategoryName?: string;
+  nestedId?: string;
+  nestedName?: string;
+}
 
-const SearchTaxonomies: React.FC = () => {
+interface SearchTaxonomiesProps {
+  data: Category[];
+  isLoading: boolean;
+  error?: string | null;
+  onRefresh?: () => void;
+  selectedItem: SelectedItem | null;
+  onSelectionChange: (selection: SelectedItem | null) => void;
+}
+
+const SearchTaxonomies: React.FC<SearchTaxonomiesProps> = ({ 
+  data, 
+  isLoading, 
+  error, 
+  onRefresh, 
+  selectedItem, 
+  onSelectionChange 
+}) => {
+  console.log('SearchTaxonomies props:', { data, isLoading, error, selectedItem });
   const [isExpanded, setIsExpanded] = useState(false);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [categories, setCategories] = useState<Category[]>(data || []);
   const [keyword, setKeyword] = useState('');
+  
+  useEffect(() => {
+    console.log('Updated categories:', categories);
+  }, [categories]);
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
-  const [selectedItem, setSelectedItem] = useState<{type: 'category' | 'subcategory' | 'nested', categoryId: string, subcategoryId?: string, nestedId?: string} | null>(null);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const anchorBoxRef = useRef<HTMLDivElement | null>(null);
   const [openViaKeyboard, setOpenViaKeyboard] = useState(false);
 
-  const fetchTaxonomyData = async () => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(API_URL);
-      if (!response.ok) {
-        throw new Error('Failed to fetch taxonomy data');
-      }
-      const responseData = await response.json();
-      console.log('API Response:', responseData);
-      const data = responseData.data || responseData;
-      
-      if (!Array.isArray(data)) {
-        throw new Error('Invalid data format received from API');
-      }
-      
-      const transformedCategories: Category[] = data.map((category: any) => ({
-        id: category.id || category._id,
-        name: category.name,
-        selected: false,
-        expanded: false,
-        subcategories: (category.subcategories || []).map((sub: any) => ({
-          id: sub.id || sub._id,
-          name: sub.name,
-          selected: false,
-          expanded: false,
-          subcategories: (sub.recordTypes || []).map((recordType: any): RecordType => ({
-            id: recordType.id || recordType._id,
-            name: recordType.name,
-            selected: false
-          }))
-        }))
-      }));
 
-      setCategories(transformedCategories);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error fetching taxonomy data:', err);
-    } finally {
-      setIsLoading(false);
+  useEffect(() => {
+    if (data) {
+      setCategories(data);
     }
-  };
-
-  useEffect(() => {
-    fetchTaxonomyData();
-  }, []);
-
-  useEffect(() => {
-    if (categories.length === 0) return;
-  }, [categories]);
+  }, [data]);
 
   // Debounce the search keyword to avoid excessive filtering
   useEffect(() => {
@@ -517,12 +499,19 @@ const SearchTaxonomies: React.FC = () => {
 
   const filteredCategories = filterCategories(categories, debouncedKeyword);
 
-  // Get selected item ID
-  const getSelectedId = () => {
+  // Get selected item name
+  const getSelectedName = () => {
     if (!selectedItem) return undefined;
-    if (selectedItem.type === 'nested') return selectedItem.nestedId;
-    if (selectedItem.type === 'subcategory') return selectedItem.subcategoryId;
-    return selectedItem.categoryId;
+    
+    if (selectedItem.type === 'category') {
+      return selectedItem.categoryName;
+    }
+    
+    if (selectedItem.type === 'subcategory') {
+      return selectedItem.subcategoryName;
+    }
+
+    return selectedItem.nestedName;
   };
 
   const handleCategoryToggle = (categoryId: string) => {
@@ -538,7 +527,7 @@ const SearchTaxonomies: React.FC = () => {
   const handleCategorySelect = (categoryId: string) => {
     // If this category is already selected, deselect it
     if (selectedItem?.type === 'category' && selectedItem.categoryId === categoryId) {
-      setSelectedItem(null);
+      onSelectionChange(null);
       setCategories(prev =>
         prev.map(cat => ({
           ...cat,
@@ -557,7 +546,14 @@ const SearchTaxonomies: React.FC = () => {
     }
 
     // Set new selection
-    setSelectedItem({type: 'category', categoryId});
+    const selectedCategory = categories.find(cat => cat.id === categoryId);
+    if (!selectedCategory) return;
+
+    onSelectionChange({
+      type: 'category',
+      categoryId,
+      categoryName: selectedCategory.name
+    });
     setCategories(prev =>
       prev.map(cat =>
         cat.id === categoryId
@@ -609,7 +605,7 @@ const SearchTaxonomies: React.FC = () => {
   const handleSubcategorySelect = (categoryId: string, subcategoryId: string) => {
     // If this subcategory is already selected, deselect it
     if (selectedItem?.type === 'subcategory' && selectedItem.categoryId === categoryId && selectedItem.subcategoryId === subcategoryId) {
-      setSelectedItem(null);
+      onSelectionChange(null);
       setCategories(prev =>
         prev.map(cat => ({
           ...cat,
@@ -628,7 +624,19 @@ const SearchTaxonomies: React.FC = () => {
     }
 
     // Set new selection
-    setSelectedItem({type: 'subcategory', categoryId, subcategoryId});
+    const selectedCategory = categories.find(cat => cat.id === categoryId);
+    if (!selectedCategory) return;
+    
+    const selectedSubcategory = selectedCategory.subcategories.find(sub => sub.id === subcategoryId);
+    if (!selectedSubcategory) return;
+
+    onSelectionChange({
+      type: 'subcategory',
+      categoryId,
+      categoryName: selectedCategory.name,
+      subcategoryId,
+      subcategoryName: selectedSubcategory.name
+    });
     setCategories(prev =>
       prev.map(cat =>
         cat.id === categoryId
@@ -674,7 +682,7 @@ const SearchTaxonomies: React.FC = () => {
   const handleNestedSubcategorySelect = (categoryId: string, subcategoryId: string, nestedId: string) => {
     // If this nested item is already selected, deselect it
     if (selectedItem?.type === 'nested' && selectedItem.categoryId === categoryId && selectedItem.subcategoryId === subcategoryId && selectedItem.nestedId === nestedId) {
-      setSelectedItem(null);
+      onSelectionChange(null);
       setCategories(prev =>
         prev.map(cat => ({
           ...cat,
@@ -693,7 +701,24 @@ const SearchTaxonomies: React.FC = () => {
     }
 
     // Set new selection
-    setSelectedItem({type: 'nested', categoryId, subcategoryId, nestedId});
+    const selectedCategory = categories.find(cat => cat.id === categoryId);
+    if (!selectedCategory) return;
+    
+    const selectedSubcategory = selectedCategory.subcategories.find(sub => sub.id === subcategoryId);
+    if (!selectedSubcategory) return;
+
+    const selectedNested = selectedSubcategory.subcategories?.find(n => n.id === nestedId);
+    if (!selectedNested) return;
+
+    onSelectionChange({
+      type: 'nested',
+      categoryId,
+      categoryName: selectedCategory.name,
+      subcategoryId,
+      subcategoryName: selectedSubcategory.name,
+      nestedId,
+      nestedName: selectedNested.name
+    });
     setCategories(prev =>
       prev.map(cat =>
         cat.id === categoryId
@@ -738,7 +763,7 @@ const SearchTaxonomies: React.FC = () => {
   };
 
   const handleClearSelection = () => {
-    setSelectedItem(null);
+    onSelectionChange(null);
     setCategories(prev =>
       prev.map(cat => ({
         ...cat,
@@ -859,20 +884,20 @@ const SearchTaxonomies: React.FC = () => {
           <TextField
             fullWidth
             placeholder="Select a taxonomy"
-            value={selectedItem ? getSelectedId() : ''}
+            value={selectedItem ? getSelectedName() : ''}
             onFocus={() => { setIsExpanded(true); setAnchorEl(anchorBoxRef.current); }}
             onClick={() => { setIsExpanded(true); setAnchorEl(anchorBoxRef.current); }}
             InputProps={{
               readOnly: true,
               startAdornment: selectedItem ? (
                 <InputAdornment position="start">
-                  {/* <Chip 
-                    label={getSelectedId()} 
+                  <Chip 
+                    label={getSelectedName()}
                     size="small" 
                     color="primary" 
                     onDelete={handleClearSelection}
                     sx={{ mr: 1 }}
-                  /> */}
+                  />
                 </InputAdornment>
               ) : null,
               endAdornment: (
@@ -974,11 +999,17 @@ const SearchTaxonomies: React.FC = () => {
             ) : error ? (
               <Box sx={{ px: 3, py: 4, textAlign: 'center', color: 'error.main' }}>
                 <Typography variant="subtitle1">{error}</Typography>
-                <Typography variant="body2" sx={{ mt: 1 }}>
-                  <IconButton color="primary" onClick={fetchTaxonomyData} size="small">
-                    Try again
-                  </IconButton>
-                </Typography>
+                {onRefresh && (
+                  <Typography variant="body2" sx={{ mt: 1 }}>
+                    <IconButton color="primary" onClick={onRefresh} size="small">
+                      Try again
+                    </IconButton>
+                  </Typography>
+                )}
+              </Box>
+            ) : !data || (filteredCategories.length === 0 && !debouncedKeyword.trim()) ? (
+              <Box sx={{ px: 3, py: 4, textAlign: 'center', color: 'text.secondary' }}>
+                <Typography variant="subtitle1" fontWeight={600}>No categories available</Typography>
               </Box>
             ) : filteredCategories.length === 0 && debouncedKeyword.trim() ? (
               <Box sx={{ px: 3, py: 4, textAlign: 'center', color: 'text.secondary' }}>
