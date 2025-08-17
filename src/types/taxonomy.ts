@@ -1,12 +1,19 @@
-export interface Subcategory {
-  id: string;
+export interface RecordType {
+  id: string;       // String ID from API
   name: string;
   selected: boolean;
-  subcategories?: Subcategory[];
+}
+
+export interface Subcategory {
+  id: string;       // String ID from API
+  name: string;
+  selected: boolean;
+  expanded: boolean;
+  subcategories: RecordType[];
 }
 
 export interface Category {
-  id: string;
+  id: string;       // String ID from API
   name: string;
   selected: boolean;
   expanded: boolean;

@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Stack, TextField, InputAdornment, IconButton, Typography, Chip, Checkbox, List, ListItem, ListItemText, ListItemButton, Popover } from '@mui/material';
+import { Box, Stack, TextField, InputAdornment, IconButton, Typography, Chip, Checkbox, List, ListItem, ListItemText, ListItemButton, Popover, CircularProgress } from '@mui/material';
 import { Search as SearchIcon, ExpandMore, ChevronRight as ChevronRightIcon, Clear as ClearIcon } from '@mui/icons-material';
-import { Category, Subcategory } from '../types/taxonomy';
-import { taxonomyData } from '../data/taxonomyData';
+import { Category, Subcategory, RecordType } from '../types/taxonomy';
+
+const API_URL = 'https://vitalretain-backend-stage-ckcpgceshzfzdgcf.eastus2-01.azurewebsites.net/api/v1/filerskeepers/taxonomy';
 
 const SearchTaxonomies: React.FC = () => {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [categories, setCategories] = useState<Category[]>(taxonomyData.categories);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [selectedItem, setSelectedItem] = useState<{type: 'category' | 'subcategory' | 'nested', categoryId: string, subcategoryId?: string, nestedId?: string} | null>(null);
@@ -15,37 +18,448 @@ const SearchTaxonomies: React.FC = () => {
   const anchorBoxRef = useRef<HTMLDivElement | null>(null);
   const [openViaKeyboard, setOpenViaKeyboard] = useState(false);
 
-  // Build a stable numeric id map for every line (category, subcategory, nested)
-  const [lineIdMap, setLineIdMap] = useState<Record<string, number>>({});
+  const fetchTaxonomyData = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch(API_URL);
+      if (!response.ok) {
+        throw new Error('Failed to fetch taxonomy data');
+      }
+      const responseData = await response.json();
+      console.log('API Response:', responseData);
+      const data = responseData.data || responseData;
+      
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid data format received from API');
+      }
+      
+      const transformedCategories: Category[] = data.map((category: any) => ({
+        id: category.id || category._id,
+        name: category.name,
+        selected: false,
+        expanded: false,
+        subcategories: (category.subcategories || []).map((sub: any) => ({
+          id: sub.id || sub._id,
+          name: sub.name,
+          selected: false,
+          expanded: false,
+          subcategories: (sub.recordTypes || []).map((recordType: any): RecordType => ({
+            id: recordType.id || recordType._id,
+            name: recordType.name,
+            selected: false
+          }))
+        }))
+      }));
+
+      setCategories(transformedCategories);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+      console.error('Error fetching taxonomy data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    let counter = 1;
-    const map: Record<string, number> = {};
-
-    const build = (cats: Category[]) => {
-      cats.forEach((cat) => {
-        const catKey = `cat:${cat.id}`;
-        if (!(catKey in map)) map[catKey] = counter++;
-        cat.subcategories.forEach((sub) => {
-          const subKey = `cat:${cat.id}/sub:${sub.id}`;
-          if (!(subKey in map)) map[subKey] = counter++;
-          sub.subcategories?.forEach((nested) => {
-            const nestedKey = `cat:${cat.id}/sub:${sub.id}/nested:${nested.id}`;
-            if (!(nestedKey in map)) map[nestedKey] = counter++;
-          });
-        });
-      });
-    };
-
-    build(taxonomyData.categories);
-    setLineIdMap(map);
+    fetchTaxonomyData();
   }, []);
+
+  useEffect(() => {
+    if (categories.length === 0) return;
+  }, [categories]);
 
   // Debounce the search keyword to avoid excessive filtering
   useEffect(() => {
     const id = setTimeout(() => setDebouncedKeyword(keyword), 150);
     return () => clearTimeout(id);
   }, [keyword]);
+
+  // Effect to handle auto-expansion based on search
+  useEffect(() => {
+    const searchTerm = debouncedKeyword.trim().toLowerCase();
+    
+    if (!searchTerm) {
+      // Reset expansion state when search is cleared
+      setCategories(prev =>
+        prev.map(category => ({
+          ...category,
+          expanded: false,
+          subcategories: category.subcategories.map(sub => ({
+            ...sub,
+            expanded: false
+          }))
+        }))
+      );
+      return;
+    }
+
+    // Function to check if text matches search term
+    const matchesSearch = (text: string) => text.toLowerCase().includes(searchTerm);
+
+    setCategories(prev =>
+      prev.map(category => {
+        const categoryMatches = matchesSearch(category.name);
+        
+        // Process subcategories and their record types
+        const updatedSubcategories = category.subcategories.map(sub => {
+          const subMatches = matchesSearch(sub.name);
+          const recordTypeMatches = sub.subcategories.some(record => 
+            matchesSearch(record.name)
+          );
+          
+          return {
+            ...sub,
+            expanded: subMatches || recordTypeMatches,
+            subcategories: sub.subcategories.map(record => ({
+              ...record,
+              selected: record.selected
+            }))
+          };
+        });
+
+        // Determine if category should be expanded based on matches
+        const shouldExpandCategory = categoryMatches || 
+          updatedSubcategories.some(sub => matchesSearch(sub.name) || 
+            sub.subcategories.some(record => matchesSearch(record.name))
+          );
+
+        return {
+          ...category,
+          expanded: shouldExpandCategory,
+          subcategories: updatedSubcategories
+        };
+      })
+    );
+  }, [debouncedKeyword]);
+
+  // Effect to handle auto-expansion based on search
+  useEffect(() => {
+    const searchTerm = debouncedKeyword.trim().toLowerCase();
+    
+    if (!searchTerm) {
+      // Reset expansion state when search is cleared
+      setCategories(prev =>
+        prev.map(category => ({
+          ...category,
+          expanded: false,
+          subcategories: category.subcategories.map(sub => ({
+            ...sub,
+            expanded: false,
+            subcategories: sub.subcategories.map(record => ({
+              ...record,
+              expanded: false,
+              subcategories: [] // Leaf nodes have empty subcategories array
+            }))
+          }))
+        }))
+      );
+      return;
+    }
+
+    // Function to check if text matches search term
+    const matchesSearch = (text: string) => text.toLowerCase().includes(searchTerm);
+
+    setCategories(prev =>
+      prev.map(category => {
+        const categoryMatches = matchesSearch(category.name);
+        
+        // Process subcategories and their record types
+        const updatedSubcategories = category.subcategories.map(sub => {
+          const subMatches = matchesSearch(sub.name);
+          const recordTypeMatches = sub.subcategories.some(record => 
+            matchesSearch(record.name)
+          );
+          
+          return {
+            ...sub,
+            expanded: subMatches || recordTypeMatches,
+            subcategories: sub.subcategories.map(record => ({
+              ...record,
+              expanded: false,
+              subcategories: [] // Leaf nodes have empty subcategories array
+            }))
+          };
+        });
+
+        // Determine if category should be expanded based on matches
+        const shouldExpandCategory = categoryMatches || 
+          updatedSubcategories.some(sub => matchesSearch(sub.name) || 
+            sub.subcategories.some(record => matchesSearch(record.name))
+          );
+
+        return {
+          ...category,
+          expanded: shouldExpandCategory,
+          subcategories: updatedSubcategories
+        };
+      })
+    );
+  }, [debouncedKeyword]);
+
+  // Effect to handle auto-expansion based on search
+  useEffect(() => {
+    const searchTerm = debouncedKeyword.trim().toLowerCase();
+    
+    if (!searchTerm) {
+      // Reset expansion state when search is cleared
+      setCategories(prev =>
+        prev.map(category => ({
+          ...category,
+          expanded: false,
+          subcategories: category.subcategories.map(sub => ({
+            ...sub,
+            expanded: false,
+            subcategories: sub.subcategories || []
+          }))
+        }))
+      );
+      return;
+    }
+
+    // Function to check if text matches search term
+    const matchesSearch = (text: string) => text.toLowerCase().includes(searchTerm);
+
+    setCategories(prev =>
+      prev.map(category => {
+        const categoryMatches = matchesSearch(category.name);
+        
+        // Process subcategories and their record types
+        const updatedSubcategories = category.subcategories.map(sub => {
+          const subMatches = matchesSearch(sub.name);
+          const recordTypeMatches = sub.subcategories.some(record => 
+            matchesSearch(record.name)
+          );
+          
+          return {
+            ...sub,
+            expanded: subMatches || recordTypeMatches,
+            subcategories: sub.subcategories.map(record => ({
+              ...record,
+              selected: record.selected,
+              expanded: false
+            }))
+          };
+        });
+
+        // Determine if category should be expanded based on matches
+        const shouldExpandCategory = categoryMatches || 
+          updatedSubcategories.some(sub => matchesSearch(sub.name) || 
+            sub.subcategories.some(record => matchesSearch(record.name))
+          );
+
+        return {
+          ...category,
+          expanded: shouldExpandCategory,
+          subcategories: updatedSubcategories
+        };
+      })
+    );
+  }, [debouncedKeyword]);
+
+  // Effect to handle auto-expansion based on search
+  useEffect(() => {
+    const searchTerm = debouncedKeyword.trim().toLowerCase();
+    
+    if (!searchTerm) {
+      // Reset expansion state when search is cleared
+      setCategories(prev =>
+        prev.map(category => ({
+          ...category,
+          expanded: false,
+          subcategories: category.subcategories.map(sub => ({
+            ...sub,
+            expanded: false,
+            selected: sub.selected,
+            subcategories: (sub.subcategories || []).map(record => ({
+              ...record,
+              selected: record.selected,
+              expanded: false
+            }))
+          }))
+        }))
+      );
+      return;
+    }
+
+    // Function to check if text matches search term
+    const matchesSearch = (text: string) => text.toLowerCase().includes(searchTerm);
+
+    setCategories(prev =>
+      prev.map(category => {
+        const categoryMatches = matchesSearch(category.name);
+        
+        // Process subcategories and their record types
+        const updatedSubcategories = category.subcategories.map(sub => {
+          const subMatches = matchesSearch(sub.name);
+          const recordTypeMatches = (sub.subcategories || []).some(record => 
+            matchesSearch(record.name)
+          );
+          
+          return {
+            id: sub.id,
+            name: sub.name,
+            selected: sub.selected,
+            expanded: subMatches || recordTypeMatches,
+            subcategories: (sub.subcategories || []).map(record => ({
+              id: record.id,
+              name: record.name,
+              selected: record.selected,
+              expanded: false
+            }))
+          };
+        });
+
+        // Determine if category should be expanded based on matches
+        const shouldExpandCategory = categoryMatches || 
+          updatedSubcategories.some(sub => matchesSearch(sub.name) || 
+            (sub.subcategories || []).some(record => matchesSearch(record.name))
+          );
+
+        return {
+          id: category.id,
+          name: category.name,
+          selected: category.selected,
+          expanded: shouldExpandCategory,
+          subcategories: updatedSubcategories
+        };
+      })
+    );
+  }, [debouncedKeyword]);
+
+  // Effect to handle auto-expansion based on search
+  useEffect(() => {
+    const searchTerm = debouncedKeyword.trim().toLowerCase();
+    
+    if (!searchTerm) {
+      // Reset expansion state when search is cleared
+      setCategories(prev =>
+        prev.map(category => ({
+          ...category,
+          expanded: false,
+          subcategories: category.subcategories.map(sub => ({
+            ...sub,
+            expanded: false,
+            subcategories: sub.subcategories || []
+          }))
+        }))
+      );
+      return;
+    }
+
+    const shouldExpand = (text: string) => text.toLowerCase().includes(searchTerm);
+
+    setCategories(prev =>
+      prev.map(category => {
+        const categoryMatches = shouldExpand(category.name);
+        
+        const updatedSubcategories = category.subcategories.map(sub => {
+          const subMatches = shouldExpand(sub.name);
+          const recordTypeMatches = (sub.subcategories || []).some(record => 
+            shouldExpand(record.name)
+          );
+          
+          // Keep existing subcategories (record types) but ensure all properties are set
+          return {
+            ...sub,
+            expanded: subMatches || recordTypeMatches,
+            subcategories: (sub.subcategories || []).map(record => ({
+              ...record,
+              selected: record.selected,
+              expanded: false // Record types don't need to be expandable
+            }))
+          };
+        });
+
+        const shouldExpandCategory = categoryMatches || updatedSubcategories.some(sub => 
+          sub.expanded || shouldExpand(sub.name)
+        );
+
+        return {
+          ...category,
+          expanded: shouldExpandCategory,
+          subcategories: updatedSubcategories
+        };
+      })
+    );
+  }, [debouncedKeyword]);
+
+  // Effect to handle auto-expansion based on search
+  useEffect(() => {
+    if (!debouncedKeyword.trim()) {
+      // Reset expansion state when search is cleared
+      setCategories(prev =>
+        prev.map(category => ({
+          ...category,
+          expanded: false,
+          subcategories: category.subcategories.map(sub => ({
+            ...sub,
+            expanded: false
+          }))
+        }))
+      );
+      return;
+    }
+
+    setCategories(prev =>
+      prev.map(category => {
+        const searchTerm = debouncedKeyword.toLowerCase();
+        const categoryMatches = category.name.toLowerCase().includes(searchTerm);
+        
+        const updatedSubcategories = category.subcategories.map(sub => {
+          const subMatches = sub.name.toLowerCase().includes(searchTerm);
+          const recordTypeMatches = sub.subcategories?.some(record => 
+            record.name.toLowerCase().includes(searchTerm)
+          );
+          
+          return {
+            ...sub,
+            expanded: subMatches || recordTypeMatches || false, // Ensure boolean type
+            subcategories: sub.subcategories || [] // Ensure subcategories is always an array
+          };
+        });
+
+        return {
+          ...category,
+          expanded: categoryMatches || updatedSubcategories.some(sub => sub.expanded),
+          subcategories: updatedSubcategories
+        };
+      })
+    );
+  }, [debouncedKeyword]);
+
+  // Effect to handle auto-expansion based on search
+  useEffect(() => {
+    if (!debouncedKeyword.trim()) {
+      // If no search keyword, don't auto-expand
+      return;
+    }
+
+    setCategories(prev =>
+      prev.map(category => {
+        const searchTerm = debouncedKeyword.toLowerCase();
+        const categoryMatches = category.name.toLowerCase().includes(searchTerm);
+        
+        const updatedSubcategories = category.subcategories.map(sub => {
+          const subMatches = sub.name.toLowerCase().includes(searchTerm);
+          const recordTypeMatches = sub.subcategories?.some(record => 
+            record.name.toLowerCase().includes(searchTerm)
+          );
+          
+          return {
+            ...sub,
+            expanded: subMatches || recordTypeMatches, // Auto-expand if subcategory or its record types match
+          };
+        });
+
+        return {
+          ...category,
+          expanded: categoryMatches || updatedSubcategories.some(sub => sub.expanded), // Auto-expand if category matches or any subcategory matches
+          subcategories: updatedSubcategories,
+        };
+      })
+    );
+  }, [debouncedKeyword]);
 
   // Filter categories based on search keyword
   const filterCategories = (categories: Category[], searchTerm: string): Category[] => {
@@ -103,17 +517,13 @@ const SearchTaxonomies: React.FC = () => {
 
   const filteredCategories = filterCategories(categories, debouncedKeyword);
 
-  // Selected numeric id lookup
-  const selectedNumericId = (() => {
+  // Get selected item ID
+  const getSelectedId = () => {
     if (!selectedItem) return undefined;
-    if (selectedItem.type === 'category') {
-      return lineIdMap[`cat:${selectedItem.categoryId}`];
-    }
-    if (selectedItem.type === 'subcategory') {
-      return lineIdMap[`cat:${selectedItem.categoryId}/sub:${selectedItem.subcategoryId}`];
-    }
-    return lineIdMap[`cat:${selectedItem.categoryId}/sub:${selectedItem.subcategoryId}/nested:${selectedItem.nestedId}`];
-  })();
+    if (selectedItem.type === 'nested') return selectedItem.nestedId;
+    if (selectedItem.type === 'subcategory') return selectedItem.subcategoryId;
+    return selectedItem.categoryId;
+  };
 
   const handleCategoryToggle = (categoryId: string) => {
     setCategories(prev =>
@@ -175,6 +585,23 @@ const SearchTaxonomies: React.FC = () => {
                 }))
               }))
             }
+      )
+    );
+  };
+
+  const handleSubcategoryExpand = (categoryId: string, subcategoryId: string) => {
+    setCategories(prev =>
+      prev.map(cat =>
+        cat.id === categoryId
+          ? {
+              ...cat,
+              subcategories: cat.subcategories.map(sub =>
+                sub.id === subcategoryId
+                  ? { ...sub, expanded: !sub.expanded }
+                  : sub
+              )
+            }
+          : cat
       )
     );
   };
@@ -333,7 +760,7 @@ const SearchTaxonomies: React.FC = () => {
       <ListItem
         key={subcategory.id}
         id={`line-cat-${categoryId}__sub-${subcategory.id}`}
-        data-line-id={lineIdMap[`cat:${categoryId}/sub:${subcategory.id}`]}
+        data-id={`${categoryId}_${subcategory.id}`}
         divider
         sx={{ pl: 6 }}
         role="treeitem"
@@ -343,7 +770,16 @@ const SearchTaxonomies: React.FC = () => {
         aria-label={`Subcategory ${subcategory.name}`}
         secondaryAction={
           subcategory.subcategories && subcategory.subcategories.length > 0 ? (
-            <ChevronRightIcon fontSize="small" sx={{ color: 'text.disabled' }} />
+            <IconButton onClick={(e) => {
+              e.stopPropagation();
+              handleSubcategoryExpand(categoryId, subcategory.id);
+            }} size="small" edge="end">
+              {subcategory.expanded ? (
+                <ExpandMore fontSize="small" />
+              ) : (
+                <ChevronRightIcon fontSize="small" />
+              )}
+            </IconButton>
           ) : undefined
         }
       >
@@ -372,13 +808,13 @@ const SearchTaxonomies: React.FC = () => {
         </ListItemButton>
       </ListItem>
 
-      {subcategory.subcategories && subcategory.subcategories.length > 0 && (
+      {subcategory.expanded && subcategory.subcategories && subcategory.subcategories.length > 0 && (
         <List disablePadding role="group" aria-label={`Nested of ${subcategory.name}`}>
           {subcategory.subcategories.map(nested => (
             <ListItem
               key={nested.id}
               id={`line-cat-${categoryId}__sub-${subcategory.id}__nested-${nested.id}`}
-              data-line-id={lineIdMap[`cat:${categoryId}/sub:${subcategory.id}/nested:${nested.id}`]}
+              data-id={`${categoryId}_${subcategory.id}_${nested.id}`}
               sx={{ pl: 9 }}
               role="treeitem"
               aria-level={3}
@@ -422,36 +858,30 @@ const SearchTaxonomies: React.FC = () => {
         <Box sx={{ flex: 1, position: 'relative' }} ref={anchorBoxRef}>
           <TextField
             fullWidth
-            placeholder="Search Taxonomies"
-            value={keyword}
-            onFocus={() => { setIsExpanded(true); setAnchorEl(anchorBoxRef.current); setOpenViaKeyboard(false); }}
-            onChange={(e) => setKeyword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown') {
-                if (!isExpanded) {
-                  setIsExpanded(true);
-                  setAnchorEl(anchorBoxRef.current);
-                }
-                setOpenViaKeyboard(true);
-                // Allow focus to move into the list naturally
-              } else if (e.key === 'Escape') {
-                setIsExpanded(false);
-              }
-            }}
+            placeholder="Select a taxonomy"
+            value={selectedItem ? getSelectedId() : ''}
+            onFocus={() => { setIsExpanded(true); setAnchorEl(anchorBoxRef.current); }}
+            onClick={() => { setIsExpanded(true); setAnchorEl(anchorBoxRef.current); }}
             InputProps={{
-              startAdornment: (
+              readOnly: true,
+              startAdornment: selectedItem ? (
                 <InputAdornment position="start">
-                  <SearchIcon fontSize="small" />
+                  {/* <Chip 
+                    label={getSelectedId()} 
+                    size="small" 
+                    color="primary" 
+                    onDelete={handleClearSelection}
+                    sx={{ mr: 1 }}
+                  /> */}
                 </InputAdornment>
-              ),
+              ) : null,
               endAdornment: (
                 <InputAdornment position="end">
                   <Stack direction="row" spacing={0.5} alignItems="center">
-                    {keyword && (
+                    {selectedItem && (
                       <IconButton
-                        aria-label="Clear search"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => setKeyword('')}
+                        aria-label="Clear selection"
+                        onClick={handleClearSelection}
                         edge="end"
                         size="small"
                       >
@@ -504,26 +934,53 @@ const SearchTaxonomies: React.FC = () => {
         }}
       >
         <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, overflow: 'hidden' }}>
-          {/* Categories Header */}
-          <Box sx={{ bgcolor: 'grey.50', px: 3, py: 2, borderBottom: 1, borderColor: 'grey.200' }}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between">
-              <Stack direction="row" alignItems="center" spacing={1.5}>
-                <Typography variant="h6" component="h2">Categories</Typography>
-                {selectedItem && selectedNumericId !== undefined && (
-                  <Chip label={`Selected: ${selectedNumericId}`} size="small" color="default" variant="outlined" />
-                )}
-              </Stack>
-              {selectedItem && (
-                <IconButton color="error" onClick={handleClearSelection} size="small">
-                  <Typography variant="body2" color="error">Clear</Typography>
-                </IconButton>
-              )}
-            </Stack>
+          {/* Search Box */}
+          <Box sx={{ bgcolor: 'grey.50', px: 3, py: 1.5, borderBottom: 1, borderColor: 'grey.200' }}>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="Search categories..."
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: keyword ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      aria-label="Clear search"
+                      onClick={() => setKeyword('')}
+                      edge="end"
+                      size="small"
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null
+              }}
+            />
           </Box>
 
           {/* Categories List */}
           <Box sx={{ maxHeight: 384, overflowY: 'auto' }}>
-            {filteredCategories.length === 0 && debouncedKeyword.trim() ? (
+            {isLoading ? (
+              <Box sx={{ px: 3, py: 4, textAlign: 'center' }}>
+                <CircularProgress size={40} />
+                <Typography variant="subtitle1" sx={{ mt: 2 }}>Loading categories...</Typography>
+              </Box>
+            ) : error ? (
+              <Box sx={{ px: 3, py: 4, textAlign: 'center', color: 'error.main' }}>
+                <Typography variant="subtitle1">{error}</Typography>
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  <IconButton color="primary" onClick={fetchTaxonomyData} size="small">
+                    Try again
+                  </IconButton>
+                </Typography>
+              </Box>
+            ) : filteredCategories.length === 0 && debouncedKeyword.trim() ? (
               <Box sx={{ px: 3, py: 4, textAlign: 'center', color: 'text.secondary' }}>
                 <SearchIcon sx={{ fontSize: 36, color: 'grey.400', mb: 1 }} />
                 <Typography variant="subtitle1" fontWeight={600}>No results found</Typography>
@@ -535,7 +992,7 @@ const SearchTaxonomies: React.FC = () => {
                   <React.Fragment key={category.id}>
                     <ListItem
                       id={`line-cat-${category.id}`}
-                      data-line-id={lineIdMap[`cat:${category.id}`]}
+                      data-id={category.id}
                       divider
                       sx={{ bgcolor: category.selected ? 'action.hover' : 'transparent' }}
                       role="treeitem"
