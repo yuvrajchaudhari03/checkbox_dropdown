@@ -1,3 +1,16 @@
+  // Helper to determine indeterminate state for subcategory
+  const isSubcategoryIndeterminate = (subcategory: Subcategory) => {
+    if (!subcategory.subcategories || subcategory.subcategories.length === 0) return false;
+    const selectedCount = subcategory.subcategories.filter(n => n.selected).length;
+    return selectedCount > 0 && selectedCount < subcategory.subcategories.length;
+  };
+
+  // Helper to determine indeterminate state for category
+  const isCategoryIndeterminate = (category: Category) => {
+    if (!category.subcategories || category.subcategories.length === 0) return false;
+    const selectedCount = category.subcategories.filter(sub => sub.selected || isSubcategoryIndeterminate(sub)).length;
+    return selectedCount > 0 && selectedCount < category.subcategories.length;
+  };
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Stack, TextField, InputAdornment, IconButton, Typography, Chip, Checkbox, List, ListItem, ListItemText, ListItemButton, Popover, CircularProgress } from '@mui/material';
 import { Search as SearchIcon, ExpandMore, ChevronRight as ChevronRightIcon, Clear as ClearIcon } from '@mui/icons-material';
@@ -820,6 +833,7 @@ const SearchTaxonomies: React.FC<SearchTaxonomiesProps> = ({
         >
           <Checkbox
             checked={!!subcategory.selected}
+            indeterminate={isSubcategoryIndeterminate(subcategory)}
             tabIndex={-1}
             disableRipple
             size="small"
@@ -1054,6 +1068,7 @@ const SearchTaxonomies: React.FC<SearchTaxonomiesProps> = ({
                       >
                         <Checkbox
                           checked={!!category.selected}
+                          indeterminate={isCategoryIndeterminate(category)}
                           tabIndex={-1}
                           disableRipple
                           size="small"

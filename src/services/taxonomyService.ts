@@ -18,17 +18,17 @@ export const fetchTaxonomies = async (): Promise<Category[]> => {
     }
     
     return data.map((category: any) => ({
-      id: category.id || category._id,
+      id: category.filerskeepersId || category._filerskeepersId,
       name: category.name,
       selected: false,
       expanded: false,
       subcategories: (category.subcategories || []).map((sub: any) => ({
-        id: sub.id || sub._id,
+        id: sub.filerskeepersId || sub._filerskeepersId,
         name: sub.name,
         selected: false,
         expanded: false,
         subcategories: (sub.recordTypes || []).map((recordType: any) => ({
-          id: recordType.id || recordType._id,
+          id: recordType.filerskeepersId || recordType._filerskeepersId,
           name: recordType.name,
           selected: false
         }))
